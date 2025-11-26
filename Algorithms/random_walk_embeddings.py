@@ -92,8 +92,6 @@ class RandomWalkEmbeddings:
         
         return neighbours, un_normalized_weights/total_sum
 
-
-        return nodes
     def random_walk(self, start_node, walk_length):
         walk = [start_node]
 
@@ -113,23 +111,61 @@ class RandomWalkEmbeddings:
 
 
     def initialize_random_vectors(self):
-        self.embeddings = np.random.rand(self.num_nodes, self.embedding_dim)
-        self.context_embeddings = np.random.rand(self.num_nodes, self.embedding_dim)
+        scale = 0.01
+        self.embeddings = np.random.randn(self.num_nodes, self.embedding_dim) * scale
+        self.context_embeddings = np.random.randn(self.num_nodes, self.embedding_dim) * scale
 
-    def feedforward(self, center_idx, context_idx, negative_indices):
+
+    def sigmoid(self, z):
+        return 1/(1 + np.exp(-z))
+
+    def feedforward(self, center_idx, context_idx, negative_indices, eps=1e-12):
         """
         Compute loss for one (center, context, negatives) example.
         """
-        pass
+        center_embedding = self.embeddings[center_idx]
+        context_embedding = self.context_embeddings[context_idx]
+        negative_context_embeddings = []
+        for idx in negative_indices:
+            negative_context_embeddings.append(self.context_embeddings[idx])
+        
+        negative_context_embeddings = np.array(negative_context_embeddings, dtype=float)
+
+        pos_dot = np.dot(center_embedding, context_embedding)
+        neg_dot = np.dot(negative_context_embeddings, center_embedding)
+
+        return np.log(self.sigmoid(pos_dot) + eps) + np.sum(np.log(self.sigmoid(-neg_dot) + eps), axis=0)
 
     def backprop(self, center_idx, context_idx, negative_indices):
         """
-        Do one SGD step and return loss.
+        Do one SGD step
         """
-        pass
+        
+        center_embedding = self.embeddings[center_idx]
+        context_embedding = self.context_embeddings[context_idx]
+        negative_context_embeddings = []
+        for idx in negative_indices:
+            negative_context_embeddings.append(self.context_embeddings[idx])
+    
+        negative_context_embeddings = np.array(negative_context_embeddings, dtype=float)
 
-    def similarity(self, node_id_1, node_id_2):
-        pass
+        x = self.sigmoid(np.dot(-center_embedding.T, context_embedding))
+        y = self.sigmoid(np.dot(negative_context_embeddings,center_embedding))
+
+        grad_u = np.dot(x, context_embedding) - np.sum(y[:, None] * negative_context_embeddings, axis=0) 
+
+        grad_v = np.dot(x, center_embedding)
+        grad_n = -y[:, None] * center_embedding
+
+        self.embeddings[center_idx] += self.lr * grad_u
+        self.context_embeddings[context_idx] += self.lr * grad_v
+        
+        self.context_embeddings[negative_indices] += self.lr * grad_n
+
+        return
+
+
+
 
     def softmax(self, x):
         x = x - np.max(x)
@@ -160,5 +196,96 @@ class RandomWalkEmbeddings:
         
         return walks
 
-    def fit(self, epochs):
-        pass
+    def fit(self, epochs, walk_length=20, random_sample_size=5):
+        total_nodes = list(self.G.nodes())
+        all_ids = np.arange(len(total_nodes))
+
+        for i in range(epochs):
+            total_loss = 0
+            counter = 0
+            for center_node in total_nodes:
+                walk = self.random_walk(center_node, walk_length=walk_length)
+                center_id = self.node_to_idx[center_node]
+                walk_ids = np.array([self.node_to_idx[n] for n in walk], dtype=int)
+                allowed_neg = np.setdiff1d(all_ids, walk_ids, assume_unique=False)
+
+                for node in walk[1:]:
+                    node_id = self.node_to_idx[node]
+                    random_sample_ids = np.random.choice(allowed_neg, size=random_sample_size, replace=True)
+                    loss = self.feedforward(center_id, node_id, random_sample_ids)
+                    self.backprop(center_id, node_id, random_sample_ids)
+                    total_loss += loss
+                    counter += 1
+
+                
+            print(f"The average loss in the epoch {i} is {-total_loss/counter}")
+
+
+
+##### LLM GENERATED DRIVER CODE => Main goal is to implement the algorithms from scratch not the driver code
+import io
+import os
+import zipfile
+import urllib.request
+
+import numpy as np
+import networkx as nx
+
+
+# ---- paste your RandomWalkEmbeddings class ABOVE this main block ----
+# ---- Paste your RandomWalkEmbeddings class ABOVE this main block ----
+if __name__ == "__main__":
+    import numpy as np
+    import networkx as nx
+    from tensorboardX import SummaryWriter
+
+    np.random.seed(42)
+
+    # =========================
+    # 1) Real-world graph with exactly 2 groups
+    # =========================
+    G = nx.karate_club_graph()  # node attr "club": "Mr. Hi" or "Officer"
+    print(f"Karate graph: |V|={G.number_of_nodes()}, |E|={G.number_of_edges()}")
+
+    # =========================
+    # 2) Train with YOUR implementation
+    # =========================
+    model = RandomWalkEmbeddings(G)
+
+    # MUST set these for your code
+    model.lr = 0.005
+    model.p = 1.0
+    model.q = 1.0
+
+    # IMPORTANT for small graphs:
+    # Keep walk_length small so allowed_neg doesn't become empty.
+    EPOCHS = 1000
+    WALK_LENGTH = 30          # small to avoid walk covering all nodes
+    NEG_K = 5                # small negatives for stability on small graph
+
+    model.fit(epochs=EPOCHS, walk_length=WALK_LENGTH, random_sample_size=NEG_K)
+
+    # =========================
+    # 3) TensorBoard Embedding Projector
+    # =========================
+    emb = ((model.embeddings + model.context_embeddings) / 2.0).astype(np.float32)
+
+    metadata = []
+    for n in model.nodes:
+        club = G.nodes[n]["club"]  # "Mr. Hi" or "Officer"
+        metadata.append([str(n), club])
+
+    LOGDIR = "runs/karate_two_groups"
+    writer = SummaryWriter(LOGDIR)
+    writer.add_embedding(
+        mat=emb,
+        metadata=metadata,
+        metadata_header=["node", "club"],
+        tag="karate_embeddings"
+    )
+    writer.close()
+
+    print("\n✅ Wrote TensorBoard logs:", LOGDIR)
+    print("Run:")
+    print("  tensorboard --logdir runs")
+    print("\nThen TensorBoard → Projector → select 'karate_embeddings' → Color by: 'club'")
