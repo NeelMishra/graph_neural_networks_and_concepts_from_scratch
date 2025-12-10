@@ -27,9 +27,17 @@ class IndependentCascade:
             node_idx = self.node_to_idx[node]
             self.idx_to_label[node_idx] = label
         return
+    
+    def reset(self):
+        self.idx_to_label = {idx : 0 for idx, node in enumerate(self.nodes)}
+        self.idx_to_infected_time = {idx : -1 for idx in self.idx_to_node}
+        return
 
     def bfs_traversal(self, source_nodes):
+        self.reset()
         queue = deque()
+
+        total_nodes_infected = source_nodes.copy()
         for node in source_nodes:
             i = self.node_to_idx[node]
             self.idx_to_label[i] = 1
@@ -46,6 +54,8 @@ class IndependentCascade:
                     queue.append([neighbor, time + 1])
                     self.idx_to_label[neighbor_idx] = 1
                     self.idx_to_infected_time[neighbor_idx] = time+1
+                    total_nodes_infected.append(neighbor)
+        return total_nodes_infected
 
 
 ### LLM Generated Driver Code
