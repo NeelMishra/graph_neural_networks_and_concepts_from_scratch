@@ -179,3 +179,52 @@ class sketch_greedy_hill_climbing:
             reached = self.forward_reach(seed, world_idx)
             self.infected_nodes[world_idx].update(reached)
 
+#### LLM generated driver code
+
+if __name__ == "__main__":
+    # ----- Build a small test graph -----
+    # Example graph:
+    # 0 -> 1 -> 2
+    # 0 -> 3 -> 2
+    # 1 -> 3
+    G = nx.DiGraph()
+    edge_prob = 0.5  # default per-edge probability if you don't set 'prob'
+
+    # Add edges with 'prob' attribute
+    G.add_edge(0, 1, prob=0.8)
+    G.add_edge(1, 2, prob=0.6)
+    G.add_edge(0, 3, prob=0.7)
+    G.add_edge(3, 2, prob=0.9)
+    G.add_edge(1, 3, prob=0.5)
+
+    # ----- Instantiate your sketch-greedy solver -----
+    worlds = 100        # number of live-edge samples
+    budget_k = 2        # how many seeds to pick
+    sketch_size = 32    # bottom-c size
+
+    solver = sketch_greedy_hill_climbing(
+        G=G,
+        worlds=worlds,
+        budget_k=budget_k,
+        sketch_size=sketch_size,
+        default_edge_prob=edge_prob
+    )
+
+    # ----- (Optional) Check influence of single-node seeds before greedy -----
+    print("Estimated influence of single-node seeds (no greedy yet):")
+    for v in solver.nodes:
+        # temporarily clear infected to get pure spread of {v}
+        saved_infected = solver.infected_nodes
+        solver.infected_nodes = [set() for _ in range(solver.R)]
+        inf_v = solver.estimate_influence({v})
+        solver.infected_nodes = saved_infected
+
+        print(f"  Node {v}: {inf_v:.3f} expected influenced nodes")
+
+    # ----- Run greedy hill climbing -----
+    seeds, total_inf = solver.solve()
+
+    print("\n=== Greedy result ===")
+    print(f"Chosen seed set (size {len(seeds)}): {seeds}")
+    print(f"Estimated total influence of seed set: {total_inf:.3f}")
+
