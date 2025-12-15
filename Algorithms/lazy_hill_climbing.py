@@ -2,17 +2,24 @@ import networkx as nx
 import numpy as np
 from collections import deque
 from heapq import heappush, heapreplace, nsmallest
+from typing import List, Set, Callable
 
-class sketch_greedy_hill_climbing:
+class lazyHillClimbing:
     '''
     This algorithm is efficient than classical hill climbing in a notary sense, i.e we use sketch instead of mc estimation of influence for a candidate set
     '''
 
-    def __init__(self, G: nx.DiGraph, worlds: int, budget_k: int, sketch_size: int, default_edge_prob: float=0.1):
+    def __init__(self, G: nx.DiGraph, worlds: int, K: int, budget: float, sketch_size: int, cost_func: Callable[[int, Set[int]], float], default_edge_prob: float=0.1):
         self.G = G
         self.R = worlds
-        self.K = budget_k
+        self.K = K
+        self.budget = budget
+        self.spent = 0
         self.sketch_size = sketch_size
+        self.cost_func = cost_func
+
+        self.heap = [] # -score, stamp, u, gain, cost
+        self.current_stamp = 0
 
         self.nodes = list(self.G.nodes())
         self.n = len(self.nodes)
@@ -52,19 +59,26 @@ class sketch_greedy_hill_climbing:
 
     
     def iterate(self):
-        best_fit = -float('inf')
+        best_score_fit = -float('inf')
         best_candidate = None
+
+        S = self.seed_set
+        base = self.estimate_influence(S)
 
         for node in self.nodes:
             if node in self.seed_set:
                 continue
+            cost = self.cost_func(node, self.seed_set)
+            if cost <= 0 or self.spent + cost > self.budget:
+                continue 
+            
 
-            influence_val = self.estimate_influence(self.seed_set.union({node}))
-            if influence_val > best_fit:
+            influence_gain = self.estimate_influence(self.seed_set.union({node})) - base
+            if influence_gain > best_score_fit:
                 best_candidate = node
-                best_fit = influence_val
+                best_score_fit = influence_gain
 
-        return best_candidate, best_fit
+        return best_candidate, best_score
 
     def build_sketches(self):
         for world_idx, random_world in enumerate(self.random_worlds):
@@ -181,53 +195,3 @@ class sketch_greedy_hill_climbing:
         for world_idx in range(self.R):
             reached = self.forward_reach(seed, world_idx)
             self.infected_nodes[world_idx].update(reached)
-
-#### LLM generated driver code
-
-if __name__ == "__main__":
-    # ----- Build a small test graph -----
-    # Example graph:
-    # 0 -> 1 -> 2
-    # 0 -> 3 -> 2
-    # 1 -> 3
-    G = nx.DiGraph()
-    edge_prob = 0.5  # default per-edge probability if you don't set 'prob'
-
-    # Add edges with 'prob' attribute
-    G.add_edge(0, 1, prob=0.8)
-    G.add_edge(1, 2, prob=0.6)
-    G.add_edge(0, 3, prob=0.7)
-    G.add_edge(3, 2, prob=0.9)
-    G.add_edge(1, 3, prob=0.5)
-
-    # ----- Instantiate your sketch-greedy solver -----
-    worlds = 100        # number of live-edge samples
-    budget_k = 2        # how many seeds to pick
-    sketch_size = 32    # bottom-c size
-
-    solver = sketch_greedy_hill_climbing(
-        G=G,
-        worlds=worlds,
-        budget_k=budget_k,
-        sketch_size=sketch_size,
-        default_edge_prob=edge_prob
-    )
-
-    # ----- (Optional) Check influence of single-node seeds before greedy -----
-    print("Estimated influence of single-node seeds (no greedy yet):")
-    for v in solver.nodes:
-        # temporarily clear infected to get pure spread of {v}
-        saved_infected = solver.infected_nodes
-        solver.infected_nodes = [set() for _ in range(solver.R)]
-        inf_v = solver.estimate_influence({v})
-        solver.infected_nodes = saved_infected
-
-        print(f"  Node {v}: {inf_v:.3f} expected influenced nodes")
-
-    # ----- Run greedy hill climbing -----
-    seeds, total_inf = solver.solve()
-
-    print("\n=== Greedy result ===")
-    print(f"Chosen seed set (size {len(seeds)}): {seeds}")
-    print(f"Estimated total influence of seed set: {total_inf:.3f}")
-
