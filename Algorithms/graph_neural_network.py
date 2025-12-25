@@ -1,6 +1,7 @@
 import torch
 from torch.nn import CrossEntropyLoss
 from torch.optim import Adam
+import torch.nn as nn
 
 '''
 LLM Generated documentation
@@ -316,6 +317,125 @@ class GCN:
                 )
             else:
                 h = aggregate_information_all_nodes @ layer['W'] +  layer['B']
+        return h
+
+    def compute_node_features(self):
+        """
+        Build a [num_nodes, 4] feature matrix X.
+
+        For each node v, features are:
+            [ degree(v),
+            ego_net_size(v),            # number of neighbors (ego-graph nodes - 1)
+            outgoing_edges_from_ego(v), # edges from ego-net to outside
+            edges_inside_ego(v) ]       # internal edges in ego-net
+        """
+        G = self.data
+        num_nodes = G.number_of_nodes()
+        X = torch.zeros((num_nodes, 4), dtype=torch.float64)
+        
+        degrees = dict(G.degree())
+
+        for node in G.nodes():
+            idx = node  # assuming nodes are 0..N-1
+
+            # Degree of the node
+            deg = degrees[node]
+
+            # Egonet around the node (radius 1)
+            egonet = nx.ego_graph(G, node, radius=1)
+            ego_nodes = set(egonet.nodes())
+            ego_size = len(ego_nodes) - 1  # neighbors only
+
+            # Edges inside egonet
+            edges_inside = egonet.number_of_edges()
+
+            # Edges going from egonet to outside
+            outgoing = 0
+            for u in ego_nodes:
+                for v in G.neighbors(u):
+                    if v not in ego_nodes:
+                        outgoing += 1
+
+            X[idx] = torch.tensor([deg, ego_size, outgoing, edges_inside],
+                                dtype=torch.float64)
+
+        return X
+        
+    def train(self, Y, epochs, criterion, optimizer):
+
+        node_features = self.compute_node_features() # X_0
+
+        for epoch in range(epochs):
+            optimizer.zero_grad()
+            logits = self.feed_forward(node_features=node_features) 
+            loss = criterion(logits, Y) # N, N_classes
+
+            print(f"epoch : {epoch}, loss : {loss.detach().cpu().item()}")
+
+            loss.backward()
+            optimizer.step()
+        
+
+    def predict(self):
+        node_features = self.compute_node_features()
+        return self.feed_forward(node_features=node_features)
+
+
+
+
+class GIN(nn.Module):
+    '''
+    Implemeneted from scratch using the stanford 2019 falls graph neural network course as reference, 224W
+    '''
+    def __init__(self, data, layer_config, eps = 0.0):
+        '''
+        layer_config : 
+        [
+        {'W': W0, 'B': B0}), # Layer_Idx, layer_configurations as a dict, W0 and B0 are the shape of the W and B
+        {'W': W1, 'B': B1}),
+        ]
+        '''
+        super().__init__()
+        self.data = data
+        self.eps = eps
+
+        self.layers = []
+        for param_shape in layer_config: # Intialize the weights of each layer
+            self.layers.append(
+                nn.Sequential(
+                nn.Linear(in_features=param_shape['W'], out_features=param_shape['H'], bias=True),
+                nn.ReLU(),
+                nn.Linear(in_features=param_shape['H'], out_features=param_shape['O'], bias=True)   
+                )
+            )
+
+        self.layers = nn.ModuleList(self.layers)
+
+        
+    
+    def aggregate_information_from_neighbour(self, node, layer_k_node_features, op_type='mean'):
+
+        #layer_k_node_features =>  nodes x feature_dimension => We need mean vector as 1 x feature_dimension?
+        result = layer_k_node_features[node].clone() * (1 + self.eps)
+
+        for neighbour in self.data.adj[node]:
+            if neighbour == node:
+                continue
+            result += layer_k_node_features[neighbour]
+
+        return result # F
+    
+
+    def feed_forward(self, node_features):
+
+        h = node_features
+        for idx, layer in enumerate(self.layers):
+            m = torch.stack([self.aggregate_information_from_neighbour(node, h) for node in self.data.nodes],
+                                                        dim=0) # Every aggregate is of shape F => so in total if we have N nodes, we have NxF
+            h = self.layers[idx](
+                    m
+                )
+
         return h
 
     def compute_node_features(self):
